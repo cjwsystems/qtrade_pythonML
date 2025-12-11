@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -8,14 +9,19 @@ from backtest import backtest_long_only, backtest_portfolio
 
 
 def main():
+    # 🔒 Global seeds for extra determinism
+    random.seed(42)
+    np.random.seed(42)
+
     symbols = ["SPY", "QQQ", "TLT", "GLD"]
     start_date = "2010-01-01"
 
     # === Build joint dataset for a single multi-asset regressor ===
     joint_df, dfs, Xs, ys, feature_cols = build_joint_dataset(symbols, start=start_date)
 
-    # One-hot encode the asset identity
+    # One-hot encode the asset identity with deterministic column order
     asset_dummies = pd.get_dummies(joint_df["symbol"], prefix="asset")
+    asset_dummies = asset_dummies.reindex(sorted(asset_dummies.columns), axis=1)
 
     # Full feature matrix: base features + asset dummies
     X_joint = pd.concat([joint_df[feature_cols], asset_dummies], axis=1)
@@ -49,52 +55,33 @@ def main():
     print("Joint valid corr(pred, actual):", corr_all)
 
     # === Per-asset thresholds using the joint model ===
-    preds_valid = {}
     preds_test = {}
     thresholds = {}
 
-    # We will re-run the model only as needed for each asset subset
     for sym in symbols:
-        df_sym = dfs[sym]
-        X_sym = Xs[sym]
-        y_sym = ys[sym]
+        # Mask rows in joint_df for this symbol
+        mask_sym = joint_df["symbol"] == sym
+        dates_sym = joint_df.loc[mask_sym, "date"]
 
-        # Rebuild the one-hot columns for this asset's X
-        sym_mask = (joint_df["symbol"] == sym)
-        # Indices for this symbol
-        dates_sym = joint_df.loc[sym_mask, "date"].values
-        # We know X_sym is aligned to common_index, same as dates_sym sorted, but
-        # easier: construct a new X_sym_joint using the same transformation
+        # Use the SAME masks but restricted to this symbol's rows
+        mask_train_sym = mask_sym & train_mask
+        mask_valid_sym = mask_sym & valid_mask
+        mask_test_sym  = mask_sym & test_mask
 
-        # Build X for this symbol alone
-        asset_dummy_sym = pd.get_dummies(
-            pd.Series(sym, index=X_sym.index),
-            prefix="asset"
-        )
-        # Ensure same dummy columns as in X_joint (fill missing with 0)
-        for col in asset_dummies.columns:
-            if col not in asset_dummy_sym.columns:
-                asset_dummy_sym[col] = 0.0
-        asset_dummy_sym = asset_dummy_sym[asset_dummies.columns]
+        # Feature matrices for this symbol in each slice
+        X_valid_sym = X_joint[mask_valid_sym]
+        X_test_sym  = X_joint[mask_test_sym]
 
-        X_sym_joint = pd.concat([X_sym[feature_cols], asset_dummy_sym], axis=1)
-
-        # Date masks at the asset level
-        dates_idx = df_sym.index
-        train_mask_sym = dates_idx <= train_end
-        valid_mask_sym = (dates_idx > train_end) & (dates_idx <= valid_end)
-        test_mask_sym  = dates_idx > valid_end
-
-        X_valid_sym = X_sym_joint.loc[valid_mask_sym]
-        X_test_sym  = X_sym_joint.loc[test_mask_sym]
-
+        # Predictions for this symbol
         pred_valid_sym = model.predict(X_valid_sym)
         pred_test_sym  = model.predict(X_test_sym)
 
-        preds_valid[sym] = pred_valid_sym
-        preds_test[sym]  = pred_test_sym
+        # Store test predictions for portfolio backtest
+        preds_test[sym] = pred_test_sym
 
-        df_valid_sym = df_sym.loc[valid_mask_sym]
+        # Align validation df for this symbol by date
+        dates_valid_sym = joint_df.loc[mask_valid_sym, "date"]
+        df_valid_sym = dfs[sym].loc[dates_valid_sym]
 
         # Threshold search (per asset) on validation using backtest_long_only
         q_grid = [0.40, 0.50, 0.60, 0.70, 0.80]
@@ -112,7 +99,8 @@ def main():
         print(f"[{sym}] Best regression threshold: {best_thr:.5f} | Sharpe (valid): {best_sharpe:.3f}")
 
     # === Multi-asset portfolio backtest on TEST period ===
-    dates_common = dfs[symbols[0]].index  # all aligned
+    # Use the same date-based test slice for dfs, matching the > valid_end rule
+    dates_common = dfs[symbols[0]].index  # already aligned
     test_mask_dates = dates_common > valid_end
 
     dfs_test = {sym: dfs[sym].loc[test_mask_dates] for sym in symbols}

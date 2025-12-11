@@ -28,5 +28,5 @@ def get_xgb_regressor():
         colsample_bytree=0.8,
         objective="reg:squarederror",
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,
     )

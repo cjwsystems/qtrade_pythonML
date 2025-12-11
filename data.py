@@ -97,10 +97,10 @@ def build_joint_dataset(symbols, start="2010-01-01"):
         dfs[sym] = df_sym
         Xs[sym] = X_sym
         ys[sym] = y_sym
+
         if feature_cols is None:
             feature_cols = feat_cols
         else:
-            # sanity check: all assets have the same feature_cols ordering
             if feature_cols != feat_cols:
                 raise ValueError(f"Feature columns mismatch for {sym}")
 
@@ -126,5 +126,9 @@ def build_joint_dataset(symbols, start="2010-01-01"):
 
     joint_df = pd.concat(rows, ignore_index=True)
 
+    # 🔒 Make ordering deterministic: sort by date, then symbol
+    joint_df = joint_df.sort_values(["date", "symbol"]).reset_index(drop=True)
+
     return joint_df, dfs, Xs, ys, feature_cols
+
 
