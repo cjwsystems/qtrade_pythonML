@@ -16,3 +16,17 @@ def get_xgb_classifier():
         eval_metric="logloss",
         random_state=42,
     )
+
+from xgboost import XGBRegressor
+
+def get_xgb_regressor():
+    return XGBRegressor(
+        n_estimators=400,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="reg:squarederror",
+        random_state=42,
+        n_jobs=-1,
+    )
